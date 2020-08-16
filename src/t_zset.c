@@ -145,9 +145,14 @@ int zslRandomLevel(void) {
     return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
 }
 
-/* Insert a new node in the skiplist. Assumes the element does not already
- * exist (up to the caller to enforce that). The skiplist takes ownership
- * of the passed SDS string 'ele'. */
+
+/** 插入跳跃表节点
+ *
+ * @param zsl 管理跳跃表
+ * @param score 分值
+ * @param ele 字符串
+ * @return
+ */
 zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     unsigned int rank[ZSKIPLIST_MAXLEVEL];
@@ -156,24 +161,29 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     serverAssert(!isnan(score));
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
-        /* store rank that is crossed to reach the insert position */
         rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
+        // 有下节点 且 下个节点小于当前的分值 且 (如果节点分值相同的情况下 比较key的字典)
         while (x->level[i].forward &&
                 (x->level[i].forward->score < score ||
                     (x->level[i].forward->score == score &&
                     sdscmp(x->level[i].forward->ele,ele) < 0)))
         {
+            // 保存每个层的步长
             rank[i] += x->level[i].span;
             x = x->level[i].forward;
         }
+        // 记录每个前节点
         update[i] = x;
     }
-    /* we assume the element is not already inside, since we allow duplicated
-     * scores, reinserting the same element should never happen since the
-     * caller of zslInsert() should test in the hash table if the element is
-     * already inside or not. */
+
+    // update[i] 记录每个层的前节点
+    // rank[i] 记录每个层的需要更新的步长
+
+    // 初始化需要插入节点的层高
     level = zslRandomLevel();
+    // 如果插入的节点层高 大于 跳跃表的层高
     if (level > zsl->level) {
+        // 需要将多出的层高
         for (i = zsl->level; i < level; i++) {
             rank[i] = 0;
             update[i] = zsl->header;
@@ -181,26 +191,35 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
         }
         zsl->level = level;
     }
+
+    // 创建需要插入跳跃表的节点
     x = zslCreateNode(level,score,ele);
     for (i = 0; i < level; i++) {
+
+        // 每一层为有序链表 参照插入链表的做法
         x->level[i].forward = update[i]->level[i].forward;
         update[i]->level[i].forward = x;
 
-        /* update span covered by update[i] as x is inserted here */
         x->level[i].span = update[i]->level[i].span - (rank[0] - rank[i]);
+        // 更新步长
         update[i]->level[i].span = (rank[0] - rank[i]) + 1;
     }
 
-    /* increment span for untouched levels */
+    // 因为插入一个节点 需要每层的span都需要+1
     for (i = level; i < zsl->level; i++) {
         update[i]->level[i].span++;
     }
 
+    // 每个节点的 后退指针都指向 第一层的 前一个节点 如果插入的节点不是头节点
     x->backward = (update[0] == zsl->header) ? NULL : update[0];
+    // 如果插入的节点后面有节点
     if (x->level[0].forward)
+        // 则后面节点的后退指针指向自己
         x->level[0].forward->backward = x;
     else
+        // 如果没有节点 则 插入的节点为最后一个节点 尾指针指向自己
         zsl->tail = x;
+    // 增加跳跃表的长度 因为插入一个节点
     zsl->length++;
     return x;
 }
